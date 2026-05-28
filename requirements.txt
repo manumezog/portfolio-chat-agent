@@ -1,0 +1,15 @@
+langchain
+langchain-text-splitters
+fastapi
+uvicorn[standard]
+langchain-google-genai
+langchain-community
+langchain-chroma
+langchain-huggingface
+sentence-transformers
+chromadb
+pypdf
+docx2txt
+python-dotenv
+jupyter
+notebook
