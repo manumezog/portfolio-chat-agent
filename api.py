@@ -47,31 +47,44 @@ load_dotenv()
 MAX_MESSAGE_CHARS = 500          # reject inputs longer than this
 MAX_TURNS_PER_SESSION = 20       # kill session after N exchanges to prevent history bloat
 MAX_REQUESTS_PER_IP_PER_MIN = 10 # sliding-window rate limit per client IP
-ALLOWED_ORIGINS = os.getenv(     # read from env so you can tighten this in production
-    "ALLOWED_ORIGINS", "*"       # default "*" is fine locally; set to your domain in prod
+MAX_REQUESTS_PER_DAY = 200       # global daily cap across all users — protects against billing surprises
+RETRIEVER_K = 8                  # chunks retrieved per query (more = better answers, slightly more tokens)
+ALLOWED_ORIGINS = os.getenv(     # set ALLOWED_ORIGINS env var in HF Space to restrict to your domain
+    "ALLOWED_ORIGINS", "*"       # default "*" is fine locally; in prod: "https://www.cv.manuelmezo.com"
 ).split(",")
 
 # ---------------------------------------------------------------------------
-# In-memory rate limiter
-#
-# defaultdict(list) gives every new IP key an empty list automatically.
-# We store a list of UNIX timestamps for each IP.
-# On every request we:
-#   1. Drop timestamps older than 60 seconds (outside the window)
-#   2. Check if the remaining count is at the limit
-#   3. If not, append the current timestamp and allow the request
+# In-memory rate limiter (per IP, sliding 60-second window)
 # ---------------------------------------------------------------------------
 _rate_store: dict = defaultdict(list)
 
 def is_rate_limited(ip: str) -> bool:
     now = time.time()
-    # Keep only timestamps within the last 60 seconds
     window = [t for t in _rate_store[ip] if now - t < 60]
     _rate_store[ip] = window
     if len(window) >= MAX_REQUESTS_PER_IP_PER_MIN:
-        return True          # limit reached — caller should return 429
+        return True
     _rate_store[ip].append(now)
     return False
+
+# ---------------------------------------------------------------------------
+# Daily global request counter
+#
+# Tracks total requests across ALL users today. Resets at midnight UTC.
+# Prevents a single day of abuse from generating a surprise bill — even if
+# the per-IP rate limit is bypassed via many different IPs.
+# ---------------------------------------------------------------------------
+_daily: dict = {"date": "", "count": 0}
+
+def is_daily_budget_exceeded() -> bool:
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _daily["date"] != today:
+        # New day — reset counter
+        _daily["date"] = today
+        _daily["count"] = 0
+    _daily["count"] += 1
+    return _daily["count"] > MAX_REQUESTS_PER_DAY
 
 # ---------------------------------------------------------------------------
 # Global app state
@@ -117,7 +130,7 @@ async def lifespan(app: FastAPI):
     # as_retriever() wraps the store with a .invoke(query) interface that
     # returns the top-k most similar documents. k=4 is a good balance between
     # context richness and token cost.
-    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": RETRIEVER_K})
 
     # The LLM that generates answers. Only this call hits the Gemini API.
     # max_output_tokens caps the response length → directly caps cost per call.
@@ -297,16 +310,20 @@ async def chat(request: ChatRequest, http_request: Request):
     for a low-traffic portfolio site. For high traffic you'd use .ainvoke().
     """
 
-    # 1. Rate limiting — read client IP from the request and check the window
+    # 1. Daily global budget — hard ceiling across all users, resets at midnight UTC
+    if is_daily_budget_exceeded():
+        raise HTTPException(status_code=429, detail="Daily request limit reached. Try again tomorrow.")
+
+    # 2. Rate limiting — read client IP from the request and check the window
     client_ip = http_request.client.host if http_request.client else "unknown"
     if is_rate_limited(client_ip):
         # HTTP 429 = Too Many Requests — standard code for rate limiting
         raise HTTPException(status_code=429, detail="Too many requests. Please slow down.")
 
-    # 2. Resolve session — use provided ID or create a new UUID
+    # 3. Resolve session — use provided ID or create a new UUID
     session_id = request.session_id or str(uuid.uuid4())
 
-    # 3. Enforce turn cap — count pairs of (human, ai) messages in history
+    # 4. Enforce turn cap — count pairs of (human, ai) messages in history
     sessions = app_state.get("sessions", {})
     if session_id in sessions:
         turns = len(sessions[session_id].messages) // 2  # each turn = 1 human + 1 AI message
@@ -316,7 +333,7 @@ async def chat(request: ChatRequest, http_request: Request):
                 detail="Session limit reached. Please refresh to start a new conversation."
             )
 
-    # 4. Invoke the RAG chain with retry on transient Google 500s
+    # 5. Invoke the RAG chain with retry on transient Google 500s
     # The session_id is passed via config["configurable"] — RunnableWithMessageHistory
     # uses it to look up the right ChatMessageHistory from the session store.
     last_err = None
