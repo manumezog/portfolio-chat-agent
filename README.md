@@ -65,6 +65,30 @@ portfolio-chat-agent/
 
 ---
 
+## Learning notebook
+
+`portfolio_rag_pipeline.ipynb` is a step-by-step Jupyter notebook that builds the full pipeline interactively. Run it before the API to understand each component in isolation.
+
+| Section | What you learn |
+|---|---|
+| 1. Setup | Loading env vars, importing LangChain |
+| 2. Document loading | `PyPDFLoader`, `Docx2txtLoader`, the `Document` object |
+| 3. Text splitting | `RecursiveCharacterTextSplitter`, chunk size vs. overlap trade-offs |
+| 4. Embeddings | What a vector is, how `embed_query` works |
+| 5. Vector store | Building and persisting ChromaDB, skipping re-embedding on reload |
+| 6. Retriever | Similarity search, inspecting retrieved chunks before adding the LLM |
+| 7. RAG chain | LCEL pipe operator, `RunnablePassthrough.assign`, `StrOutputParser` |
+| 8. Q&A | Testing the full pipeline end to end |
+| 9. Next steps | — |
+| 10. Chat history | `RunnableWithMessageHistory`, contextualize → retrieve → answer pattern |
+
+To run it:
+```bash
+jupyter notebook portfolio_rag_pipeline.ipynb
+```
+
+---
+
 ## Setup
 
 ### 1. Install dependencies
