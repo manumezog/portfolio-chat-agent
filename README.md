@@ -1,3 +1,12 @@
+---
+title: Portfolio Chat Agent
+emoji: 💬
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
+
 # Portfolio Chat Agent
 
 A RAG (Retrieval-Augmented Generation) chat agent embedded in my personal portfolio. Visitors can ask questions about my education, professional experience, and projects — the agent answers based on my actual CV, thesis, and project documents.
@@ -53,14 +62,14 @@ FastAPI backend (api.py)
 
 ```
 portfolio-chat-agent/
-├── data/                        # Source documents (CV, thesis, project examples)
-├── chroma_db/                   # Persisted vector store (git-ignored)
+├── chroma_db/                   # Persisted vector store
 ├── portfolio_rag_pipeline.ipynb # Step-by-step learning notebook
 ├── api.py                       # FastAPI backend
 ├── chat-widget.js               # Drop-in portfolio chat widget
 ├── chat-widget.css              # Widget styles (dark theme)
+├── Dockerfile                   # HF Spaces Docker deployment
 ├── requirements.txt
-└── .env                         # GOOGLE_API_KEY (git-ignored)
+└── .env.example                 # GOOGLE_API_KEY template
 ```
 
 ---
@@ -89,7 +98,7 @@ jupyter notebook portfolio_rag_pipeline.ipynb
 
 ---
 
-## Setup
+## Setup (local)
 
 ### 1. Install dependencies
 
@@ -106,19 +115,11 @@ cp .env.example .env
 
 ### 3. Build the vector store
 
-Run the notebook `portfolio_rag_pipeline.ipynb` cells 1–5, or run the build script:
-
-```python
-# From the notebook — sections 2, 3, 4, 5
-# Uses local HuggingFace embeddings (no API key needed for this step)
-```
-
-The `chroma_db/` folder is created automatically.
+Run sections 2–5 of the notebook, or use the rebuild script in the **Updating the knowledge base** section below.
 
 ### 4. Start the API
 
 ```bash
-# Use your Anaconda/venv Python explicitly if needed
 python -m uvicorn api:app --reload
 ```
 
@@ -133,7 +134,17 @@ Copy `chat-widget.js` and `chat-widget.css` to your portfolio folder, then add b
 <script src="chat-widget.js"></script>
 ```
 
-Update `API_URL` in `chat-widget.js` to your deployed API URL for production.
+Update `API_URL` in `chat-widget.js` to your deployed API URL.
+
+---
+
+## Deployment (HF Spaces)
+
+1. Create a new Space on [huggingface.co](https://huggingface.co) with SDK = Docker
+2. Add `GOOGLE_API_KEY` as a Space secret (Settings → Variables and secrets)
+3. Push this repo as the Space repo
+
+The container exposes port 7860 as required by HF Spaces.
 
 ---
 
@@ -169,19 +180,7 @@ Send the returned `session_id` on follow-up messages to maintain conversation hi
 | Scraping / abuse bots | Rate limit: 10 requests/min/IP (429 returned) |
 | Cross-origin abuse | CORS restricted to configured origins |
 | Prompt injection via session_id | session_id validated, max 64 chars |
-| API key exposure | Key loaded from `.env`, never committed |
-
----
-
-## LangChain concepts covered
-
-- **Document loaders** — `PyPDFLoader`, `Docx2txtLoader`
-- **Text splitting** — `RecursiveCharacterTextSplitter`
-- **Embeddings** — local HuggingFace sentence-transformers
-- **Vector store** — ChromaDB with similarity search
-- **LCEL chains** — `RunnablePassthrough.assign`, `RunnableLambda`, pipe operator
-- **Chat history** — `RunnableWithMessageHistory`, `ChatMessageHistory`
-- **Conversational RAG** — contextualize question → retrieve → answer pattern
+| API key exposure | Key loaded from `.env` / HF Space secret, never committed |
 
 ---
 
@@ -191,19 +190,11 @@ The agent answers from the documents in `data/`. To teach it new things:
 
 ### 1. Add your documents
 
-Drop any `.pdf` or `.docx` files into the `data/` folder. Examples:
-- New CV version
-- Project write-ups
-- Course certificates
-- Blog posts or articles (exported as PDF)
+Drop any `.pdf` or `.docx` files into the `data/` folder.
 
 ### 2. Stop the API (if running)
 
-The ChromaDB files must not be open when you rebuild. Press `Ctrl+C` in the uvicorn terminal.
-
 ### 3. Rebuild the vector store
-
-Run this Python script (or re-run sections 2–5 of the notebook):
 
 ```python
 import os, uuid, shutil
@@ -212,20 +203,16 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
-# Load all documents from data/
 docs = []
 for f in os.listdir("data"):
     p = os.path.join("data", f)
     if f.endswith(".pdf"):   docs.extend(PyPDFLoader(p).load())
     elif f.endswith(".docx"): docs.extend(Docx2txtLoader(p).load())
 
-# Split and filter empty chunks
 chunks = [c for c in RecursiveCharacterTextSplitter(
     chunk_size=500, chunk_overlap=80
 ).split_documents(docs) if c.page_content.strip()]
-print(f"{len(chunks)} chunks")
 
-# Embed locally and rebuild store
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 if os.path.exists("chroma_db"): shutil.rmtree("chroma_db")
 
@@ -239,22 +226,24 @@ vs._collection.add(documents=texts, embeddings=vectors, metadatas=metas, ids=ids
 print(f"Done. {vs._collection.count()} chunks indexed.")
 ```
 
-### 4. Restart the API
+### 4. Commit chroma_db and redeploy
 
 ```bash
-python -m uvicorn api:app --reload
+git add chroma_db/
+git commit -m "Update knowledge base"
+git push
 ```
 
-That's it — the agent immediately answers from the new documents. No retraining, no model fine-tuning. This is the power of RAG: the knowledge lives in the vector store, not in the model weights.
+HF Spaces rebuilds the Docker image automatically on push.
 
 ---
 
-## Deployment
+## LangChain concepts covered
 
-The API is designed to run on any Python host. Recommended options for free-tier hosting:
-
-- **Railway** — `railway up` from project root
-- **Render** — connect GitHub repo, set `GOOGLE_API_KEY` env var
-- **Google Cloud Run** — scales to zero, good for low traffic
-
-After deploying, update `API_URL` in `chat-widget.js` and update `ALLOWED_ORIGINS` in `.env`.
+- **Document loaders** — `PyPDFLoader`, `Docx2txtLoader`
+- **Text splitting** — `RecursiveCharacterTextSplitter`
+- **Embeddings** — local HuggingFace sentence-transformers
+- **Vector store** — ChromaDB with similarity search
+- **LCEL chains** — `RunnablePassthrough.assign`, `RunnableLambda`, pipe operator
+- **Chat history** — `RunnableWithMessageHistory`, `ChatMessageHistory`
+- **Conversational RAG** — contextualize question → retrieve → answer pattern

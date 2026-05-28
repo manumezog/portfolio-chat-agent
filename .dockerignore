@@ -1,0 +1,11 @@
+.env
+.git
+.claude
+__pycache__
+*.pyc
+*.ipynb
+data/
+chroma_db_verify/
+*.egg-info
+.venv
+venv
