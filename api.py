@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 # HTTPException lets us abort a request with a specific HTTP status code and message.
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 # BaseModel: Pydantic base class. Any class inheriting it gets automatic JSON
 # parsing, type coercion, and validation — FastAPI uses it for request/response bodies.
 # field_validator: decorator to add custom validation logic to a single field.
@@ -230,7 +231,256 @@ async def lifespan(app: FastAPI):
 # FastAPI() creates the ASGI application. The lifespan parameter tells it
 # which function to call on startup/shutdown.
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Portfolio Chat Agent", lifespan=lifespan)
+app = FastAPI(
+    title="Portfolio Chat Agent API",
+    description="RAG-powered conversational agent for Manuel Mezo's portfolio. Built with LangChain, ChromaDB, and Gemini 2.5 Flash.",
+    version="1.0.0",
+    contact={
+        "name": "Manuel Mezo",
+        "url": "https://www.cv.manuelmezo.com",
+    },
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+
+_LANDING_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portfolio Chat Agent API — Manuel Mezo</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f172a; --card: #1e293b; --border: #334155;
+    --text: #f1f5f9; --muted: #94a3b8;
+    --grad: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);
+    --accent: #0ea5e9;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  a:hover { text-decoration: underline; }
+
+  .hero {
+    text-align: center; padding: 80px 40px 60px;
+    border-bottom: 1px solid var(--border);
+  }
+  .badge {
+    display: inline-block; background: var(--grad);
+    color: #fff; font-size: 0.72rem; font-weight: 700;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    padding: 5px 14px; border-radius: 20px; margin-bottom: 20px;
+  }
+  h1 { font-size: 2.8rem; font-weight: 800; letter-spacing: -1px; margin-bottom: 16px; }
+  .grad-text { background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; }
+  .hero p { font-size: 1.1rem; color: var(--muted); max-width: 600px; margin: 0 auto 32px; }
+
+  .links { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 22px; border-radius: 8px; font-size: 0.9rem; font-weight: 700;
+    transition: opacity .15s; text-decoration: none;
+  }
+  .btn-primary { background: var(--grad); color: #fff; }
+  .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+  .btn:hover { opacity: .85; text-decoration: none; }
+
+  .container { max-width: 900px; margin: 0 auto; padding: 0 40px; }
+
+  .section { padding: 60px 0; border-bottom: 1px solid var(--border); }
+  .section h2 { font-size: 1.3rem; font-weight: 800; margin-bottom: 24px; color: var(--text); }
+
+  .flow {
+    display: flex; gap: 0; margin: 0 0 32px; flex-wrap: wrap;
+  }
+  .flow-step {
+    flex: 1; min-width: 90px;
+    background: var(--card); border: 1px solid var(--border);
+    padding: 14px 10px; text-align: center; position: relative;
+  }
+  .flow-step:first-child { border-radius: 8px 0 0 8px; }
+  .flow-step:last-child  { border-radius: 0 8px 8px 0; }
+  .flow-step:not(:last-child)::after {
+    content: '→'; position: absolute; right: -13px; top: 50%; transform: translateY(-50%);
+    color: var(--accent); font-weight: 700; z-index: 2;
+  }
+  .flow-step .icon { font-size: 1.3rem; margin-bottom: 4px; }
+  .flow-step .label { font-size: 0.68rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .endpoint-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; margin-bottom: 16px; overflow: hidden;
+  }
+  .endpoint-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+  }
+  .method {
+    font-size: 0.75rem; font-weight: 800; padding: 3px 10px; border-radius: 5px;
+  }
+  .method.post { background: #065f46; color: #6ee7b7; }
+  .method.get  { background: #1e3a5f; color: #7dd3fc; }
+  .endpoint-path { font-family: monospace; font-size: 1rem; color: var(--text); font-weight: 700; }
+  .endpoint-desc { color: var(--muted); font-size: 0.875rem; margin-left: auto; }
+  .endpoint-body { padding: 18px 20px; }
+  .endpoint-body p { color: var(--muted); font-size: 0.9rem; margin-bottom: 14px; }
+
+  pre {
+    background: #0f172a; border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 18px;
+    font-size: 0.82rem; overflow-x: auto; color: #e2e8f0; line-height: 1.6;
+  }
+  code { font-family: 'Courier New', monospace; }
+
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 24px; }
+  .pill {
+    background: var(--card); border: 1px solid var(--border);
+    color: var(--muted); font-size: 0.78rem; font-weight: 600;
+    padding: 4px 12px; border-radius: 20px;
+  }
+
+  .security-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+  .sec-item {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px;
+  }
+  .sec-item strong { display: block; font-size: 0.85rem; color: var(--text); margin-bottom: 4px; }
+  .sec-item span { font-size: 0.82rem; color: var(--muted); }
+  @media (max-width: 600px) { .security-grid { grid-template-columns: 1fr; } }
+
+  footer {
+    text-align: center; padding: 40px; color: var(--muted); font-size: 0.85rem;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="badge">🤖 RAG · LangChain · FastAPI</div>
+  <h1>Portfolio Chat Agent <span class="grad-text">API</span></h1>
+  <p>
+    A conversational AI agent that answers questions about
+    <a href="https://www.cv.manuelmezo.com" target="_blank">Manuel Mezo's</a>
+    education, professional experience, skills, and projects — grounded in his actual CV and documents.
+  </p>
+  <div class="links">
+    <a class="btn btn-primary" href="/docs">📖 Interactive API Docs</a>
+    <a class="btn btn-secondary" href="https://www.cv.manuelmezo.com/portfolio-chat-agent-project.html" target="_blank">🧠 How it was built</a>
+    <a class="btn btn-secondary" href="https://github.com/manumezog/portfolio-chat-agent" target="_blank">💻 GitHub</a>
+    <a class="btn btn-secondary" href="https://www.cv.manuelmezo.com" target="_blank">🌐 Portfolio</a>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="section">
+    <h2>Architecture</h2>
+    <div class="flow">
+      <div class="flow-step"><div class="icon">💬</div><div class="label">Widget</div></div>
+      <div class="flow-step"><div class="icon">🔐</div><div class="label">Rate limit</div></div>
+      <div class="flow-step"><div class="icon">🔄</div><div class="label">Contextualize</div></div>
+      <div class="flow-step"><div class="icon">🔍</div><div class="label">Retrieve</div></div>
+      <div class="flow-step"><div class="icon">🧠</div><div class="label">Gemini LLM</div></div>
+      <div class="flow-step"><div class="icon">✅</div><div class="label">Answer</div></div>
+    </div>
+    <p style="color: var(--muted); font-size: 0.9rem;">
+      Built with <strong style="color:var(--text)">LangChain LCEL</strong> chains.
+      Embeddings run locally (<code>all-MiniLM-L6-v2</code>) — no API calls for retrieval.
+      The LLM (<strong style="color:var(--text)">Gemini 2.5 Flash</strong>) only runs at answer time.
+      Conversation history is managed per <code>session_id</code> using
+      <code>RunnableWithMessageHistory</code>.
+    </p>
+    <div class="pills">
+      <span class="pill">LangChain 1.3</span>
+      <span class="pill">ChromaDB</span>
+      <span class="pill">Gemini 2.5 Flash</span>
+      <span class="pill">sentence-transformers/all-MiniLM-L6-v2</span>
+      <span class="pill">FastAPI</span>
+      <span class="pill">Docker · HF Spaces</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Endpoints</h2>
+
+    <div class="endpoint-card">
+      <div class="endpoint-header">
+        <span class="method post">POST</span>
+        <span class="endpoint-path">/chat</span>
+        <span class="endpoint-desc">Send a message, get an answer</span>
+      </div>
+      <div class="endpoint-body">
+        <p>
+          Send a question about Manuel's background, experience, or projects.
+          Include the <code>session_id</code> returned on the first call to maintain conversation history
+          across follow-up questions.
+        </p>
+        <pre><code># First message — omit session_id
+curl -X POST https://manumezog-portfolio-chat-agent.hf.space/chat \\
+  -H "Content-Type: application/json" \\
+  -d '{"message": "What did Manuel study?"}'
+
+# Response
+{
+  "answer": "Manuel has a Master's in Aerospace Engineering from UC3M...",
+  "session_id": "a3f8c2d1-..."
+}
+
+# Follow-up — send session_id to maintain history
+curl -X POST https://manumezog-portfolio-chat-agent.hf.space/chat \\
+  -H "Content-Type: application/json" \\
+  -d '{"message": "What tools did he use?", "session_id": "a3f8c2d1-..."}'</code></pre>
+      </div>
+    </div>
+
+    <div class="endpoint-card">
+      <div class="endpoint-header">
+        <span class="method get">GET</span>
+        <span class="endpoint-path">/health</span>
+        <span class="endpoint-desc">Liveness check</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Returns server status and whether the RAG chain loaded successfully at startup.</p>
+        <pre><code>curl https://manumezog-portfolio-chat-agent.hf.space/health
+
+{"status": "ok", "chain_loaded": true}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Rate limits & security</h2>
+    <div class="security-grid">
+      <div class="sec-item"><strong>500 char input cap</strong><span>Prevents token-exhaustion on a single request</span></div>
+      <div class="sec-item"><strong>512 token output cap</strong><span>Limits LLM cost per response</span></div>
+      <div class="sec-item"><strong>10 req / min / IP</strong><span>Per-IP sliding window rate limit</span></div>
+      <div class="sec-item"><strong>200 req / day global</strong><span>Hard daily ceiling across all users</span></div>
+      <div class="sec-item"><strong>20 turns / session</strong><span>History cap prevents memory bloat</span></div>
+      <div class="sec-item"><strong>CORS restricted</strong><span>Only portfolio domain allowed in production</span></div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  Built by <a href="https://www.cv.manuelmezo.com" target="_blank">Manuel Mezo</a> &nbsp;·&nbsp;
+  <a href="https://github.com/manumezog/portfolio-chat-agent" target="_blank">GitHub</a> &nbsp;·&nbsp;
+  <a href="/docs" target="_blank">Swagger UI</a> &nbsp;·&nbsp;
+  <a href="/redoc" target="_blank">ReDoc</a>
+</footer>
+
+</body>
+</html>"""
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def landing():
+    """Custom landing page for the API — explains the project and links to docs."""
+    return _LANDING_HTML
 
 # ---------------------------------------------------------------------------
 # CORS Middleware
