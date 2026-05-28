@@ -21,7 +21,7 @@
 (function () {
   // ── Config ────────────────────────────────────────────────
   // Change this to your deployed API URL when you go to production
-  const API_URL = "http://localhost:8000/chat";
+  const API_URL = "https://manumezog-portfolio-chat-agent.hf.space/chat";
 
   // ── State ─────────────────────────────────────────────────
   let sessionId = null;   // null until first message is sent
