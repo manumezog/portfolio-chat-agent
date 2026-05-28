@@ -7,3 +7,4 @@ chroma_db/
 chroma_db_verify/
 *.egg-info/
 .ipynb_checkpoints/
+data/
