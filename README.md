@@ -11,7 +11,9 @@ pinned: false
 
 A RAG (Retrieval-Augmented Generation) chat agent embedded in my personal portfolio. Visitors can ask questions about my education, professional experience, and projects — the agent answers based on my actual CV, thesis, and project documents.
 
-Live at: [cv.manuelmezo.com](https://www.cv.manuelmezo.com)
+Live at: [cv.manuelmezo.com](https://www.cv.manuelmezo.com)  
+API: [manumezog-portfolio-chat-agent.hf.space](https://manumezog-portfolio-chat-agent.hf.space)  
+HF Space: [huggingface.co/spaces/manumezog/portfolio-chat-agent](https://huggingface.co/spaces/manumezog/portfolio-chat-agent)
 
 ---
 
@@ -140,11 +142,19 @@ Update `API_URL` in `chat-widget.js` to your deployed API URL.
 
 ## Deployment (HF Spaces)
 
+**Live deployment:** [huggingface.co/spaces/manumezog/portfolio-chat-agent](https://huggingface.co/spaces/manumezog/portfolio-chat-agent)  
+**API endpoint:** `https://manumezog-portfolio-chat-agent.hf.space/chat`
+
+The Docker image builds ChromaDB from `knowledge_base.json` at image build time — no binary files in git. On every push to the `hf-deploy` branch, HF Spaces automatically rebuilds and redeploys.
+
+To deploy your own fork:
 1. Create a new Space on [huggingface.co](https://huggingface.co) with SDK = Docker
 2. Add `GOOGLE_API_KEY` as a Space secret (Settings → Variables and secrets)
-3. Push this repo as the Space repo
+3. Push this repo to the Space remote
 
 The container exposes port 7860 as required by HF Spaces.
+
+> **Note:** Free tier Spaces sleep after 48h of inactivity. The first request after sleep takes ~30s to cold-start.
 
 ---
 
