@@ -12,8 +12,9 @@ pinned: false
 A RAG (Retrieval-Augmented Generation) chat agent embedded in my personal portfolio. Visitors can ask questions about my education, professional experience, and projects — the agent answers based on my actual CV, thesis, and project documents.
 
 Live at: [cv.manuelmezo.com](https://www.cv.manuelmezo.com)  
-API: [manumezog-portfolio-chat-agent.hf.space](https://manumezog-portfolio-chat-agent.hf.space)  
-HF Space: [huggingface.co/spaces/manumezog/portfolio-chat-agent](https://huggingface.co/spaces/manumezog/portfolio-chat-agent)
+API: [manumezog-portfolio-chat-agent.hf.space](https://manumezog-portfolio-chat-agent.hf.space) · [Interactive API docs](https://manumezog-portfolio-chat-agent.hf.space/docs)  
+HF Space: [huggingface.co/spaces/manumezog/portfolio-chat-agent](https://huggingface.co/spaces/manumezog/portfolio-chat-agent)  
+Portfolio page: [portfolio-chat-agent-project.html](https://www.cv.manuelmezo.com/portfolio-chat-agent-project.html)
 
 ---
 
@@ -73,6 +74,24 @@ portfolio-chat-agent/
 ├── requirements.txt
 └── .env.example                 # GOOGLE_API_KEY template
 ```
+
+---
+
+## Learning resources
+
+### Step-by-step guide on the portfolio
+
+A comprehensive **project page** on my portfolio site explains the full learning journey:
+- **Document Loading** — `PyPDFLoader`, `Docx2txtLoader`, the `Document` object
+- **Text Splitting** — `RecursiveCharacterTextSplitter`, chunk size & overlap trade-offs
+- **Embeddings** — Local HuggingFace sentence-transformers vs cloud APIs
+- **Vector Store** — ChromaDB architecture, persistence, and similarity search
+- **RAG Chain** — LCEL pipe operator, `RunnablePassthrough.assign`, chaining
+- **Chat Memory** — `RunnableWithMessageHistory`, contextualization chains
+- **FastAPI Backend** — Lifespan, Pydantic validation, CORS, security layers
+- **Deployment** — Docker on HF Spaces, JSON-based knowledge base
+
+👉 **[Read the full learning guide](https://www.cv.manuelmezo.com/portfolio-chat-agent-project.html)**
 
 ---
 
