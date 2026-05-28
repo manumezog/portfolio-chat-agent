@@ -2,18 +2,21 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies first (cached layer — only rebuilds when requirements change)
+# Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app code and pre-built vector store
+# Copy knowledge base (plain JSON) and build script
+COPY knowledge_base.json .
+COPY build_db.py .
+
+# Build ChromaDB from JSON during image build — no binary files in git
+RUN python build_db.py
+
+# Copy API
 COPY api.py .
-COPY chroma_db/ ./chroma_db/
 
-# HF Spaces runs containers as a non-root user — make files accessible
-RUN chmod -R 755 /app
-
-# HF Spaces always exposes port 7860
+# HF Spaces requires port 7860
 EXPOSE 7860
 
 CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "7860"]
