@@ -52,7 +52,7 @@ FastAPI backend (api.py)
 | Layer | Technology |
 |---|---|
 | LLM | Google Gemini 2.5 Flash |
-| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` (local, no API) |
+| Embeddings | `BAAI/bge-small-en-v1.5` (local, no API — ~25% better retrieval than MiniLM) |
 | Vector store | ChromaDB (persisted to disk) |
 | RAG framework | LangChain (LCEL chains) |
 | Chat memory | `RunnableWithMessageHistory` + in-memory session store |
