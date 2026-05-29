@@ -8,4 +8,9 @@ chroma_db_verify/
 *.egg-info/
 .ipynb_checkpoints/
 data/
+chroma_db-copy/
+# Source documents — large/confidential; knowledge_base.json is the built artifact
+data - copia/*.pdf
+data - copia/*.docx
+portfolio_rag_pipeline - copia.ipynb
 .claude/
