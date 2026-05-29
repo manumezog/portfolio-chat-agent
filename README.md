@@ -9,7 +9,7 @@ pinned: false
 
 # Portfolio Chat Agent
 
-A RAG (Retrieval-Augmented Generation) chat agent embedded in my personal portfolio. Visitors can ask questions about my education, professional experience, and projects — the agent answers based on my actual CV, thesis, and project documents.
+A RAG (Retrieval-Augmented Generation) chat agent embedded in my personal portfolio. Visitors can ask questions about my education, professional experience, and projects — the agent answers based on carefully curated knowledge documents, not LLM memory.
 
 Live at: [cv.manuelmezo.com](https://www.cv.manuelmezo.com)  
 API: [manumezog-portfolio-chat-agent.hf.space](https://manumezog-portfolio-chat-agent.hf.space) · [Interactive API docs](https://manumezog-portfolio-chat-agent.hf.space/docs)  
@@ -35,7 +35,7 @@ FastAPI backend (api.py)
         │
         ▼
   Retriever → ChromaDB (local embeddings)
-  "Find 4 most relevant document chunks"
+  "Find 8 most relevant knowledge chunks"
         │
         ▼
   Answer chain (Gemini 2.5 Flash, max 512 tokens)
@@ -61,61 +61,109 @@ FastAPI backend (api.py)
 
 ---
 
+## Knowledge base design
+
+The agent's quality depends entirely on the quality of the indexed content. After an initial version that gave poor answers (built from presentation slides only), the knowledge base was redesigned from scratch.
+
+### Input documents (`data - copia/`)
+
+| File | Type | Purpose |
+|---|---|---|
+| `professional_experience_stories.md` | Synthetic | 17 professional STAR stories in clean prose, with metadata headers (Company, Year, Skills). Replaces a raw interview-prep DOCX. |
+| `professional_summary.md` | Synthetic | ~600-word narrative bio — career arc, what he brings, target roles. |
+| `technical_skills.md` | Synthetic | Structured skills taxonomy with evidence per skill. |
+| `personality_and_approach.md` | Synthetic | 7 sections on working style and soft skills, each backed by a real story. |
+| `side_projects.md` | Synthetic | Descriptions of all 15+ portfolio projects. |
+| CV PDFs | Source | Two CV variants (Applied AI, Physical AI). |
+| Thesis PDFs | Source | Full thesis reports (MSc, two BSc). Full documents, not just slides. |
+
+> **Source PDFs and DOCX are gitignored** — they contain personal data and are large. `knowledge_base.json` is the pre-processed artifact used for deployment.
+
+### Why this matters: the "garbage in, garbage out" problem
+
+The original version indexed presentation slides (PDFs of PPTs). These are bullet-point fragments with almost no prose — they produce incoherent retrieval chunks. The original STAR interview-prep document was also in rough notes format with no structure. The 500-character blind chunker would cut mid-story, producing chunks with no company, no context, and no result.
+
+**Result:** questions like *"Tell me about a time you dealt with a difficult stakeholder"* returned fragments like *"Additionally he handled with 'brio' this cross-functional project..."* — useless without context.
+
+**Fix:** hand-authored documents designed for retrieval:
+- Each STAR story is a self-contained prose unit with company/skills metadata embedded
+- Synthetic summaries answer cross-cutting questions ("What is Manuel's working style?") that no single CV chunk can answer
+- Story-level chunking preserves narrative coherence instead of splitting mid-sentence
+
+### Chunking strategy
+
+```
+prepare_knowledge_base.py
+  ├── Markdown files → split on "---" story separators (semantic chunking)
+  │     Each story/section stays as one chunk (max 1800 chars)
+  │     Falls back to RecursiveCharacterTextSplitter only if section is too long
+  └── PDF files → RecursiveCharacterTextSplitter(chunk_size=1200, overlap=150)
+        Larger than typical (was 500) — narrative text needs more context per chunk
+```
+
+Result: **1,042 chunks** from 10 source files. Story chunks carry structured metadata (`title`, `company`, `skills`, `year`) for potential filtered retrieval.
+
+---
+
 ## Project structure
 
 ```
 portfolio-chat-agent/
-├── chroma_db/                   # Persisted vector store
-├── portfolio_rag_pipeline.ipynb # Step-by-step learning notebook
-├── api.py                       # FastAPI backend
-├── chat-widget.js               # Drop-in portfolio chat widget
-├── chat-widget.css              # Widget styles (dark theme)
-├── Dockerfile                   # HF Spaces Docker deployment
+├── data - copia/                   # Knowledge source documents
+│   ├── professional_experience_stories.md   # 17 STAR stories
+│   ├── professional_summary.md              # Narrative bio
+│   ├── technical_skills.md                  # Skills taxonomy
+│   ├── personality_and_approach.md          # Working style
+│   └── side_projects.md                     # Portfolio projects
+├── prepare_knowledge_base.py       # Builds knowledge_base.json from data - copia/
+├── build_db.py                     # Builds chroma_db from knowledge_base.json (Docker)
+├── portfolio_rag_pipeline.ipynb    # Step-by-step learning notebook
+├── api.py                          # FastAPI backend
+├── chat-widget.js                  # Drop-in portfolio chat widget
+├── chat-widget.css                 # Widget styles (dark theme)
+├── Dockerfile                      # HF Spaces Docker deployment
 ├── requirements.txt
-└── .env.example                 # GOOGLE_API_KEY template
+└── .env.example                    # GOOGLE_API_KEY template
 ```
 
 ---
 
-## Learning resources
+## Updating the knowledge base
 
-### Step-by-step guide on the portfolio
+### 1. Edit source documents
 
-A comprehensive **project page** on my portfolio site explains the full learning journey:
-- **Document Loading** — `PyPDFLoader`, `Docx2txtLoader`, the `Document` object
-- **Text Splitting** — `RecursiveCharacterTextSplitter`, chunk size & overlap trade-offs
-- **Embeddings** — Local HuggingFace sentence-transformers vs cloud APIs
-- **Vector Store** — ChromaDB architecture, persistence, and similarity search
-- **RAG Chain** — LCEL pipe operator, `RunnablePassthrough.assign`, chaining
-- **Chat Memory** — `RunnableWithMessageHistory`, contextualization chains
-- **FastAPI Backend** — Lifespan, Pydantic validation, CORS, security layers
-- **Deployment** — Docker on HF Spaces, JSON-based knowledge base
+Add or edit files in `data - copia/`. The markdown files are the primary knowledge source — edit them directly.
 
-👉 **[Read the full learning guide](https://www.cv.manuelmezo.com/portfolio-chat-agent-project.html)**
+- For new professional stories: follow the `## Title` + `**Company/Year/Skills**` + S/T/A/R prose format in `professional_experience_stories.md`, separated by `---`
+- For new projects: add a `---`-delimited section to `side_projects.md`
 
----
+### 2. Rebuild `knowledge_base.json`
 
-## Learning notebook
-
-`portfolio_rag_pipeline.ipynb` is a step-by-step Jupyter notebook that builds the full pipeline interactively. Run it before the API to understand each component in isolation.
-
-| Section | What you learn |
-|---|---|
-| 1. Setup | Loading env vars, importing LangChain |
-| 2. Document loading | `PyPDFLoader`, `Docx2txtLoader`, the `Document` object |
-| 3. Text splitting | `RecursiveCharacterTextSplitter`, chunk size vs. overlap trade-offs |
-| 4. Embeddings | What a vector is, how `embed_query` works |
-| 5. Vector store | Building and persisting ChromaDB, skipping re-embedding on reload |
-| 6. Retriever | Similarity search, inspecting retrieved chunks before adding the LLM |
-| 7. RAG chain | LCEL pipe operator, `RunnablePassthrough.assign`, `StrOutputParser` |
-| 8. Q&A | Testing the full pipeline end to end |
-| 9. Next steps | — |
-| 10. Chat history | `RunnableWithMessageHistory`, contextualize → retrieve → answer pattern |
-
-To run it:
 ```bash
-jupyter notebook portfolio_rag_pipeline.ipynb
+python prepare_knowledge_base.py
 ```
+
+This loads all `.md` and `.pdf` files from `data - copia/`, applies smart chunking, strips personal contact info from PDF chunks, and writes `knowledge_base.json`.
+
+### 3. Deploy to HF Spaces
+
+`knowledge_base.json` is gitignored on GitHub (contains document text). Push to HF separately via the `hf-deploy` orphan branch:
+
+```bash
+git checkout hf-deploy
+git add -f knowledge_base.json        # force-add the gitignored file
+git add api.py build_db.py Dockerfile requirements.txt prepare_knowledge_base.py \
+        "data - copia/professional_experience_stories.md" \
+        "data - copia/professional_summary.md" \
+        "data - copia/technical_skills.md" \
+        "data - copia/personality_and_approach.md" \
+        "data - copia/side_projects.md"
+git commit -m "Deploy: update knowledge base"
+git push hf hf-deploy:main --force    # HF builds from main, not master
+git checkout master
+```
+
+HF Spaces rebuilds the Docker image automatically, running `build_db.py` to reconstruct ChromaDB from the JSON.
 
 ---
 
@@ -134,9 +182,12 @@ cp .env.example .env
 # Add your GOOGLE_API_KEY to .env
 ```
 
-### 3. Build the vector store
+### 3. Build the knowledge base and vector store
 
-Run sections 2–5 of the notebook, or use the rebuild script in the **Updating the knowledge base** section below.
+```bash
+python prepare_knowledge_base.py   # generates knowledge_base.json
+python build_db.py                 # builds chroma_db/ from the JSON
+```
 
 ### 4. Start the API
 
@@ -164,12 +215,13 @@ Update `API_URL` in `chat-widget.js` to your deployed API URL.
 **Live deployment:** [huggingface.co/spaces/manumezog/portfolio-chat-agent](https://huggingface.co/spaces/manumezog/portfolio-chat-agent)  
 **API endpoint:** `https://manumezog-portfolio-chat-agent.hf.space/chat`
 
-The Docker image builds ChromaDB from `knowledge_base.json` at image build time — no binary files in git. On every push to the `hf-deploy` branch, HF Spaces automatically rebuilds and redeploys.
+The Docker image builds ChromaDB from `knowledge_base.json` at image build time — no binary files needed in git. HF Spaces builds from the `main` branch (not `master`).
 
 To deploy your own fork:
 1. Create a new Space on [huggingface.co](https://huggingface.co) with SDK = Docker
 2. Add `GOOGLE_API_KEY` as a Space secret (Settings → Variables and secrets)
-3. Push this repo to the Space remote
+3. Add a remote: `git remote add hf https://huggingface.co/spaces/YOUR_USER/YOUR_SPACE`
+4. Push: `git push hf YOUR_BRANCH:main`
 
 The container exposes port 7860 as required by HF Spaces.
 
@@ -210,69 +262,39 @@ Send the returned `session_id` on follow-up messages to maintain conversation hi
 | Cross-origin abuse | CORS restricted to configured origins |
 | Prompt injection via session_id | session_id validated, max 64 chars |
 | API key exposure | Key loaded from `.env` / HF Space secret, never committed |
+| Personal data exposure | Phone/email stripped from CV chunks; source PDFs gitignored |
 
 ---
 
-## Updating the knowledge base
+## Learning notebook
 
-The agent answers from the documents in `data/`. To teach it new things:
+`portfolio_rag_pipeline.ipynb` is a step-by-step Jupyter notebook that builds the full pipeline interactively.
 
-### 1. Add your documents
-
-Drop any `.pdf` or `.docx` files into the `data/` folder.
-
-### 2. Stop the API (if running)
-
-### 3. Rebuild the vector store
-
-```python
-import os, uuid, shutil
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-
-docs = []
-for f in os.listdir("data"):
-    p = os.path.join("data", f)
-    if f.endswith(".pdf"):   docs.extend(PyPDFLoader(p).load())
-    elif f.endswith(".docx"): docs.extend(Docx2txtLoader(p).load())
-
-chunks = [c for c in RecursiveCharacterTextSplitter(
-    chunk_size=500, chunk_overlap=80
-).split_documents(docs) if c.page_content.strip()]
-
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-if os.path.exists("chroma_db"): shutil.rmtree("chroma_db")
-
-texts  = [c.page_content for c in chunks]
-metas  = [c.metadata     for c in chunks]
-ids    = [str(uuid.uuid4()) for _ in chunks]
-vectors = embeddings.embed_documents(texts)
-
-vs = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
-vs._collection.add(documents=texts, embeddings=vectors, metadatas=metas, ids=ids)
-print(f"Done. {vs._collection.count()} chunks indexed.")
-```
-
-### 4. Commit chroma_db and redeploy
+| Section | What you learn |
+|---|---|
+| 1. Setup | Loading env vars, importing LangChain |
+| 2. Document loading | `PyPDFLoader`, `TextLoader`, the `Document` object |
+| 3. Text splitting | `RecursiveCharacterTextSplitter`, chunk size vs. overlap trade-offs |
+| 4. Embeddings | What a vector is, how `embed_query` works |
+| 5. Vector store | Building and persisting ChromaDB |
+| 6. Retriever | Similarity search, inspecting retrieved chunks |
+| 7. RAG chain | LCEL pipe operator, `RunnablePassthrough`, `StrOutputParser` |
+| 8. Q&A | Testing the full pipeline end to end |
+| 10. Chat history | `RunnableWithMessageHistory`, contextualize → retrieve → answer pattern |
 
 ```bash
-git add chroma_db/
-git commit -m "Update knowledge base"
-git push
+jupyter notebook portfolio_rag_pipeline.ipynb
 ```
-
-HF Spaces rebuilds the Docker image automatically on push.
 
 ---
 
 ## LangChain concepts covered
 
-- **Document loaders** — `PyPDFLoader`, `Docx2txtLoader`
-- **Text splitting** — `RecursiveCharacterTextSplitter`
+- **Document loaders** — `PyPDFLoader`, `TextLoader`
+- **Text splitting** — `RecursiveCharacterTextSplitter`, semantic story-level splitting
 - **Embeddings** — local HuggingFace sentence-transformers
-- **Vector store** — ChromaDB with similarity search
-- **LCEL chains** — `RunnablePassthrough.assign`, `RunnableLambda`, pipe operator
+- **Vector store** — ChromaDB with similarity search and metadata
+- **LCEL chains** — `RunnablePassthrough.assign`, pipe operator
 - **Chat history** — `RunnableWithMessageHistory`, `ChatMessageHistory`
 - **Conversational RAG** — contextualize question → retrieve → answer pattern
+- **Knowledge base design** — synthetic documents, chunking strategy, metadata enrichment
