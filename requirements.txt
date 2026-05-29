@@ -13,3 +13,4 @@ docx2txt
 python-dotenv
 jupyter
 notebook
+langfuse

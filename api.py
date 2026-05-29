@@ -28,6 +28,12 @@ from fastapi.responses import HTMLResponse
 # field_validator: decorator to add custom validation logic to a single field.
 from pydantic import BaseModel, field_validator
 
+try:
+    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler  # langfuse >= 2.0
+    _LANGFUSE_AVAILABLE = True
+except ImportError:
+    _LANGFUSE_AVAILABLE = False
+
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -220,6 +226,21 @@ async def lifespan(app: FastAPI):
         history_messages_key="chat_history",
     )
     app_state["sessions"] = session_store  # expose so the endpoint can inspect turn count
+
+    # ── Langfuse observability (optional) ────────────────────────────────
+    # If LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY are set in the environment,
+    # every chat request will be traced in Langfuse automatically.
+    # Leave the keys unset to run without tracing — nothing else changes.
+    langfuse_enabled = (
+        _LANGFUSE_AVAILABLE
+        and bool(os.getenv("LANGFUSE_SECRET_KEY"))
+        and bool(os.getenv("LANGFUSE_PUBLIC_KEY"))
+    )
+    app_state["langfuse_enabled"] = langfuse_enabled
+    if langfuse_enabled:
+        print("Langfuse tracing: ENABLED")
+    else:
+        print("Langfuse tracing: disabled (keys not set or langfuse not installed)")
 
     print("Chat agent ready.")
     yield  # server runs here — everything after yield is teardown (nothing needed)
@@ -583,7 +604,22 @@ async def chat(request: ChatRequest, http_request: Request):
                 detail="Session limit reached. Please refresh to start a new conversation."
             )
 
-    # 5. Invoke the RAG chain with retry on transient Google 500s
+    # 5. Build Langfuse callback for this request (if tracing is enabled).
+    #    A per-request handler means every conversation gets its own trace in
+    #    Langfuse, grouped by session_id so you can follow the full thread.
+    callbacks = []
+    if app_state.get("langfuse_enabled"):
+        callbacks.append(LangfuseCallbackHandler(
+            public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+            secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+            host=os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com"),
+            session_id=session_id,      # groups all turns of this conversation
+            user_id=client_ip,          # lets you filter traces by visitor
+            trace_name="portfolio-chat",
+            tags=["production"],
+        ))
+
+    # 6. Invoke the RAG chain with retry on transient Google 500s
     # The session_id is passed via config["configurable"] — RunnableWithMessageHistory
     # uses it to look up the right ChatMessageHistory from the session store.
     last_err = None
@@ -591,7 +627,10 @@ async def chat(request: ChatRequest, http_request: Request):
         try:
             answer = app_state["chain"].invoke(
                 {"input": request.message},
-                config={"configurable": {"session_id": session_id}},
+                config={
+                    "configurable": {"session_id": session_id},
+                    "callbacks": callbacks,   # empty list = no tracing (no-op)
+                },
             )
             return ChatResponse(answer=answer, session_id=session_id)
         except HTTPException:
