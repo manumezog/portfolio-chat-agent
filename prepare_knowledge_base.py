@@ -4,6 +4,17 @@ prepare_knowledge_base.py
 Loads all documents from DATA_DIR and generates knowledge_base.json
 with smart chunking:
 
+DEPLOY WORKFLOW (knowledge_base.json is gitignored on GitHub):
+  1. Edit source docs in data - copia/*.md
+  2. python prepare_knowledge_base.py          # regenerate knowledge_base.json
+  3. git checkout hf-deploy                    # switch to HF deploy branch
+     (or: git checkout --orphan hf-deploy && git reset)
+  4. git add -f knowledge_base.json            # force-add the ignored file
+  5. git add api.py build_db.py Dockerfile requirements.txt ...
+  6. git commit -m "Deploy: ..."
+  7. git push hf hf-deploy:main --force        # triggers HF Spaces rebuild
+  8. git checkout master
+
   - Markdown files (.md): split on '---' story separators first,
     keeping each story/section as one self-contained chunk.
     Falls back to RecursiveCharacterTextSplitter only for sections
