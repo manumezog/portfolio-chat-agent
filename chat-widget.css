@@ -93,6 +93,18 @@
 }
 .chat-msg.typing { color: #9ca3af; font-style: italic; }
 
+/* Markdown rendering inside bot bubbles */
+.chat-msg.bot strong { color: #111827; font-weight: 700; }
+.chat-msg.bot em { font-style: italic; }
+.chat-msg.bot code {
+  background: #e5e7eb; border-radius: 3px;
+  padding: 1px 5px; font-family: monospace; font-size: 12px;
+}
+.chat-msg.bot ul, .chat-msg.bot ol {
+  margin: 6px 0 6px 18px; padding: 0;
+}
+.chat-msg.bot li { margin-bottom: 4px; }
+
 #chat-widget-input-row {
   display: flex;
   padding: 10px 12px;

@@ -67,11 +67,71 @@
   });
   sendBtn.addEventListener("click", sendMessage);
 
+  // ── Markdown renderer ─────────────────────────────────────
+  // Security model:
+  //   1. ALL text from the LLM is HTML-escaped via esc() before any processing.
+  //   2. The only HTML tags introduced are hard-coded string literals we write.
+  //   3. A final allowlist sanitizer strips any tag not in the permitted set,
+  //      providing defence-in-depth if the above ever had a gap.
+  // Result: innerHTML is safe to use on this output.
+  function renderMarkdown(raw) {
+    // Step 1 — escape all characters that could form HTML tags or entities
+    const esc = s => s
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+    // Step 2 — apply inline formatting on already-escaped text only
+    const inline = s => s
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g, "<em>$1</em>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>");
+
+    const lines = raw.split("\n");
+    const out = [];
+    let listType = null;
+
+    const closeList = () => {
+      if (listType) { out.push(`</${listType}>`); listType = null; }
+    };
+
+    for (const line of lines) {
+      const ul = line.match(/^[\*\-]\s+(.*)/);
+      const ol = line.match(/^\d+\.\s+(.*)/);
+      if (ul) {
+        if (listType !== "ul") { closeList(); out.push("<ul>"); listType = "ul"; }
+        out.push(`<li>${inline(esc(ul[1]))}</li>`);
+      } else if (ol) {
+        if (listType !== "ol") { closeList(); out.push("<ol>"); listType = "ol"; }
+        out.push(`<li>${inline(esc(ol[1]))}</li>`);
+      } else {
+        closeList();
+        const t = line.trim();
+        if (!t) {
+          if (out.length && out[out.length - 1] !== "<br>") out.push("<br>");
+        } else {
+          out.push(inline(esc(t)) + "<br>");
+        }
+      }
+    }
+    closeList();
+    let html = out.join("").replace(/^(<br>)+/, "").replace(/(<br>)+$/, "");
+
+    // Step 3 — allowlist sanitizer: strip any tag not explicitly permitted
+    html = html.replace(/<\/?(?!(strong|em|code|ul|ol|li|br)\b)[a-z][^>]*>/gi, "");
+    return html;
+  }
+
   // ── Helpers ───────────────────────────────────────────────
   function appendMessage(text, role) {
     const div = document.createElement("div");
     div.className = `chat-msg ${role}`;
-    div.textContent = text;
+    // User messages: plain text (no need to render markdown)
+    // Bot messages: render markdown to HTML
+    if (role === "user") {
+      div.textContent = text;
+    } else {
+      div.innerHTML = renderMarkdown(text);
+    }
     messages.appendChild(div);
     messages.scrollTop = messages.scrollHeight;   // auto-scroll to bottom
     return div;
@@ -109,7 +169,7 @@
       const data = await response.json();
       sessionId = data.session_id;   // save for follow-up questions
 
-      typing.textContent = data.answer;
+      typing.innerHTML = renderMarkdown(data.answer);
       typing.classList.remove("typing");
 
     } catch (err) {
