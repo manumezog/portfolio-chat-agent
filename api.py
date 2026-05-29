@@ -231,9 +231,12 @@ async def lifespan(app: FastAPI):
     app_state["sessions"] = session_store  # expose so the endpoint can inspect turn count
 
     # ── Langfuse observability (optional) ────────────────────────────────
-    # If LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY are set in the environment,
-    # every chat request will be traced in Langfuse automatically.
-    # Leave the keys unset to run without tracing — nothing else changes.
+    # Langfuse v4 reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
+    # from env vars automatically. LANGFUSE_BASE_URL is an alias some configs use
+    # — copy it to LANGFUSE_HOST so the SDK picks it up either way.
+    if os.getenv("LANGFUSE_BASE_URL") and not os.getenv("LANGFUSE_HOST"):
+        os.environ["LANGFUSE_HOST"] = os.environ["LANGFUSE_BASE_URL"]
+
     langfuse_enabled = (
         _LANGFUSE_AVAILABLE
         and bool(os.getenv("LANGFUSE_SECRET_KEY"))
@@ -612,10 +615,10 @@ async def chat(request: ChatRequest, http_request: Request):
     #    Langfuse, grouped by session_id so you can follow the full thread.
     callbacks = []
     if app_state.get("langfuse_enabled"):
+        # Langfuse v4: credentials are read from LANGFUSE_PUBLIC_KEY /
+        # LANGFUSE_SECRET_KEY / LANGFUSE_HOST env vars automatically.
+        # Only pass per-request context here.
         callbacks.append(LangfuseCallbackHandler(
-            public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-            secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-            host=os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com"),
             session_id=session_id,      # groups all turns of this conversation
             user_id=client_ip,          # lets you filter traces by visitor
             trace_name="portfolio-chat",
