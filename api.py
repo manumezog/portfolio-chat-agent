@@ -29,7 +29,10 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, field_validator
 
 try:
-    from langfuse import Langfuse  # langfuse v4+
+    # Langfuse v4: CallbackHandler takes no metadata args;
+    # session/user context is set via propagate_attributes() context manager.
+    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
+    from langfuse import propagate_attributes as _langfuse_propagate
     _LANGFUSE_AVAILABLE = True
 except ImportError:
     _LANGFUSE_AVAILABLE = False
@@ -242,9 +245,6 @@ async def lifespan(app: FastAPI):
     )
     app_state["langfuse_enabled"] = langfuse_enabled
     if langfuse_enabled:
-        # Langfuse v4: create a singleton client that reads keys from env vars.
-        # Per request we call langfuse.trace() to get a handler with session metadata.
-        app_state["langfuse"] = Langfuse()
         print("Langfuse tracing: ENABLED")
     else:
         print("Langfuse tracing: disabled (keys not set or langfuse not installed)")
@@ -611,42 +611,44 @@ async def chat(request: ChatRequest, http_request: Request):
                 detail="Session limit reached. Please refresh to start a new conversation."
             )
 
-    # 5. Build Langfuse callback for this request (if tracing is enabled).
-    #    A per-request handler means every conversation gets its own trace in
-    #    Langfuse, grouped by session_id so you can follow the full thread.
-    callbacks = []
-    if app_state.get("langfuse_enabled"):
-        # Langfuse v4: create a trace first, then get the LangChain handler from it.
-        # This is the only way to attach session_id / user_id metadata in v4.
-        trace = app_state["langfuse"].trace(
-            name="portfolio-chat",
-            session_id=session_id,
-            user_id=client_ip,
-            tags=["production"],
-        )
-        callbacks.append(trace.get_langchain_handler())
+    # 5. Invoke the RAG chain (with optional Langfuse tracing).
+    #    Langfuse v4 API: CallbackHandler() takes no metadata args.
+    #    Session/user context propagates via propagate_attributes() context manager.
+    #    The entire Langfuse setup is in a try/except — if anything fails,
+    #    the request still succeeds without tracing.
+    from contextlib import nullcontext
 
-    # 6. Invoke the RAG chain with retry on transient Google 500s
-    # The session_id is passed via config["configurable"] — RunnableWithMessageHistory
-    # uses it to look up the right ChatMessageHistory from the session store.
-    last_err = None
-    for attempt in range(3):
+    callbacks = []
+    trace_ctx = nullcontext()
+    if app_state.get("langfuse_enabled"):
         try:
-            answer = app_state["chain"].invoke(
-                {"input": request.message},
-                config={
-                    "configurable": {"session_id": session_id},
-                    "callbacks": callbacks,   # empty list = no tracing (no-op)
-                },
+            callbacks = [LangfuseCallbackHandler()]
+            trace_ctx = _langfuse_propagate(
+                session_id=session_id,
+                user_id=client_ip,
             )
-            return ChatResponse(answer=answer, session_id=session_id)
-        except HTTPException:
-            raise  # don't swallow our own intentional errors
-        except Exception as e:
-            last_err = e
-            if "500" in str(e) or "INTERNAL" in str(e):
-                # Exponential backoff: 1s, 2s, 4s before giving up
-                time.sleep(2 ** attempt)
-                continue
-            raise  # non-500 errors are not transient — fail immediately
-    raise last_err   # all 3 attempts failed
+        except Exception:
+            callbacks = []
+            trace_ctx = nullcontext()
+
+    last_err = None
+    with trace_ctx:
+        for attempt in range(3):
+            try:
+                answer = app_state["chain"].invoke(
+                    {"input": request.message},
+                    config={
+                        "configurable": {"session_id": session_id},
+                        "callbacks": callbacks,
+                    },
+                )
+                return ChatResponse(answer=answer, session_id=session_id)
+            except HTTPException:
+                raise
+            except Exception as e:
+                last_err = e
+                if "500" in str(e) or "INTERNAL" in str(e):
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
+    raise last_err
