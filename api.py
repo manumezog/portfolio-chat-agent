@@ -29,7 +29,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, field_validator
 
 try:
-    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler  # langfuse >= 2.0
+    from langfuse import Langfuse  # langfuse v4+
     _LANGFUSE_AVAILABLE = True
 except ImportError:
     _LANGFUSE_AVAILABLE = False
@@ -231,9 +231,7 @@ async def lifespan(app: FastAPI):
     app_state["sessions"] = session_store  # expose so the endpoint can inspect turn count
 
     # ── Langfuse observability (optional) ────────────────────────────────
-    # Langfuse v4 reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
-    # from env vars automatically. LANGFUSE_BASE_URL is an alias some configs use
-    # — copy it to LANGFUSE_HOST so the SDK picks it up either way.
+    # LANGFUSE_BASE_URL is the HF Space secret name; the SDK expects LANGFUSE_HOST.
     if os.getenv("LANGFUSE_BASE_URL") and not os.getenv("LANGFUSE_HOST"):
         os.environ["LANGFUSE_HOST"] = os.environ["LANGFUSE_BASE_URL"]
 
@@ -244,6 +242,9 @@ async def lifespan(app: FastAPI):
     )
     app_state["langfuse_enabled"] = langfuse_enabled
     if langfuse_enabled:
+        # Langfuse v4: create a singleton client that reads keys from env vars.
+        # Per request we call langfuse.trace() to get a handler with session metadata.
+        app_state["langfuse"] = Langfuse()
         print("Langfuse tracing: ENABLED")
     else:
         print("Langfuse tracing: disabled (keys not set or langfuse not installed)")
@@ -615,15 +616,15 @@ async def chat(request: ChatRequest, http_request: Request):
     #    Langfuse, grouped by session_id so you can follow the full thread.
     callbacks = []
     if app_state.get("langfuse_enabled"):
-        # Langfuse v4: credentials are read from LANGFUSE_PUBLIC_KEY /
-        # LANGFUSE_SECRET_KEY / LANGFUSE_HOST env vars automatically.
-        # Only pass per-request context here.
-        callbacks.append(LangfuseCallbackHandler(
-            session_id=session_id,      # groups all turns of this conversation
-            user_id=client_ip,          # lets you filter traces by visitor
-            trace_name="portfolio-chat",
+        # Langfuse v4: create a trace first, then get the LangChain handler from it.
+        # This is the only way to attach session_id / user_id metadata in v4.
+        trace = app_state["langfuse"].trace(
+            name="portfolio-chat",
+            session_id=session_id,
+            user_id=client_ip,
             tags=["production"],
-        ))
+        )
+        callbacks.append(trace.get_langchain_handler())
 
     # 6. Invoke the RAG chain with retry on transient Google 500s
     # The session_id is passed via config["configurable"] — RunnableWithMessageHistory
