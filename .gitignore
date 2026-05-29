@@ -12,5 +12,7 @@ chroma_db-copy/
 # Source documents — large/confidential; knowledge_base.json is the built artifact
 data - copia/*.pdf
 data - copia/*.docx
+# Pre-built vector store input — pushed to HF manually, not needed on GitHub
+knowledge_base.json
 portfolio_rag_pipeline - copia.ipynb
 .claude/
