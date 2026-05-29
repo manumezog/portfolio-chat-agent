@@ -127,8 +127,11 @@ async def lifespan(app: FastAPI):
     api_key = os.getenv("GOOGLE_API_KEY")
 
     # Local embedding model — runs on CPU, no API calls, no rate limits.
-    # all-MiniLM-L6-v2 is small (80 MB) and fast while still being accurate.
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    # bge-small-en-v1.5: same ~90MB size as MiniLM but significantly better
+    # retrieval quality (MTEB retrieval ~51 vs ~40). Trained specifically for
+    # retrieval tasks, not general sentence similarity.
+    # MUST match the model used in build_db.py — changing one requires redeploying both.
+    embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 
     # Load the pre-built ChromaDB vector store from disk.
     # persist_directory tells Chroma where the SQLite + binary index files are.

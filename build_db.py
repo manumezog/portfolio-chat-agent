@@ -14,7 +14,7 @@ texts  = [c["text"]     for c in chunks]
 metas  = [c["metadata"] for c in chunks]
 ids    = [str(uuid.uuid4()) for _ in chunks]
 
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 vectors = embeddings.embed_documents(texts)
 
 vs = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
