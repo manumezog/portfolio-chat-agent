@@ -668,8 +668,10 @@ async def tts(request: TtsRequest, http_request: Request):
         resp.raise_for_status()
         return Response(content=resp.content, media_type="audio/wav")
     except httpx.HTTPStatusError as e:
+        print(f"TTS backend HTTP error {e.response.status_code}: {e.response.text[:500]}")
         raise HTTPException(status_code=502, detail=f"TTS backend error: {e.response.status_code}")
     except Exception as e:
+        print(f"TTS exception: {type(e).__name__}: {e}")
         raise HTTPException(status_code=502, detail="TTS service unavailable.")
 
 
