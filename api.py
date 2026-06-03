@@ -265,16 +265,21 @@ async def lifespan(app: FastAPI):
     else:
         print("Langfuse tracing: disabled (keys not set or langfuse not installed)")
 
-    # ── TTS proxy: pre-load voice sample ─────────────────────────────────
-    voice_path = os.path.join(os.path.dirname(__file__), "voice_sample.mp4")
-    if os.path.exists(voice_path):
-        app_state["tts_ref_audio_b64"] = base64.b64encode(
-            open(voice_path, "rb").read()
-        ).decode()
-        print("Voice sample loaded for TTS proxy.")
+    # ── TTS proxy: load voice sample from env var (HF Secret) or fallback to file ──
+    ref_audio_b64 = os.getenv("F5_REF_AUDIO_B64", "").strip()
+    if ref_audio_b64:
+        app_state["tts_ref_audio_b64"] = ref_audio_b64
+        print("Voice sample loaded from F5_REF_AUDIO_B64 secret.")
     else:
-        app_state["tts_ref_audio_b64"] = None
-        print("WARNING: voice_sample.mp4 not found — /tts endpoint will be disabled.")
+        voice_path = os.path.join(os.path.dirname(__file__), "voice_sample.mp4")
+        if os.path.exists(voice_path):
+            app_state["tts_ref_audio_b64"] = base64.b64encode(
+                open(voice_path, "rb").read()
+            ).decode()
+            print("Voice sample loaded from file.")
+        else:
+            app_state["tts_ref_audio_b64"] = None
+            print("WARNING: no voice sample found — /tts endpoint will be disabled.")
 
     print("Chat agent ready.")
     yield  # server runs here — everything after yield is teardown (nothing needed)

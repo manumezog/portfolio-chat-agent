@@ -16,3 +16,5 @@ data - copia/*.docx
 knowledge_base.json
 portfolio_rag_pipeline - copia.ipynb
 .claude/
+voice_sample.mp4
+voice_sample_b64.txt
