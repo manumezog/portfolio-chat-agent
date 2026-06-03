@@ -165,7 +165,7 @@ async def lifespan(app: FastAPI):
         model="gemini-2.5-flash",
         google_api_key=api_key,
         temperature=0.2,        # low = more factual, less hallucination
-        max_output_tokens=512,  # hard ceiling on output — protects against runaway responses
+        max_output_tokens=800,  # enough for a complete answer; prompt instructs model to summarize rather than truncate
     )
 
     # ── Step 1: Contextualize the question ───────────────────────────────
@@ -198,7 +198,9 @@ async def lifespan(app: FastAPI):
         ("system",
          "You are a helpful assistant on Manuel Mezo's portfolio website. "
          "Answer questions about his education, experience, skills, and projects. "
-         "Use ONLY the context below. Be concise and professional.\n\nContext:\n{context}"),
+         "Use ONLY the context below. Be concise and professional. "
+         "Always write complete sentences and end with a proper conclusion — never stop mid-thought. "
+         "If the answer would be very long, summarize the key points rather than listing everything.\n\nContext:\n{context}"),
         MessagesPlaceholder("chat_history"),  # history shown so LLM can refer back to it
         ("human", "{input}"),
     ])
