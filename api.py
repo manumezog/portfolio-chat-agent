@@ -10,7 +10,9 @@ FastAPI concepts you will see here:
 - async def: non-blocking endpoint so the server handles other requests while waiting for Gemini
 """
 
+import base64
 import os
+import re
 import time
 import uuid
 from collections import defaultdict
@@ -22,7 +24,7 @@ from dotenv import load_dotenv
 # HTTPException lets us abort a request with a specific HTTP status code and message.
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 # BaseModel: Pydantic base class. Any class inheriting it gets automatic JSON
 # parsing, type coercion, and validation — FastAPI uses it for request/response bodies.
 # field_validator: decorator to add custom validation logic to a single field.
@@ -57,7 +59,9 @@ load_dotenv()
 MAX_MESSAGE_CHARS = 500          # reject inputs longer than this
 MAX_TURNS_PER_SESSION = 20       # kill session after N exchanges to prevent history bloat
 MAX_REQUESTS_PER_IP_PER_MIN = 10 # sliding-window rate limit per client IP
+MAX_TTS_PER_IP_PER_MIN = 10      # TTS is GPU — same cap as chat
 MAX_REQUESTS_PER_DAY = 200       # global daily cap across all users — protects against billing surprises
+MAX_TTS_TEXT_CHARS = 1000        # cap TTS input to avoid runaway GPU time
 RETRIEVER_K = 8                  # chunks retrieved per query (more = better answers, slightly more tokens)
 ALLOWED_ORIGINS = os.getenv(     # set ALLOWED_ORIGINS env var in HF Space to restrict to your domain
     "ALLOWED_ORIGINS", "*"       # default "*" is fine locally; in prod: "https://www.cv.manuelmezo.com"
@@ -67,6 +71,7 @@ ALLOWED_ORIGINS = os.getenv(     # set ALLOWED_ORIGINS env var in HF Space to re
 # In-memory rate limiter (per IP, sliding 60-second window)
 # ---------------------------------------------------------------------------
 _rate_store: dict = defaultdict(list)
+_tts_rate_store: dict = defaultdict(list)
 
 def is_rate_limited(ip: str) -> bool:
     now = time.time()
@@ -75,6 +80,15 @@ def is_rate_limited(ip: str) -> bool:
     if len(window) >= MAX_REQUESTS_PER_IP_PER_MIN:
         return True
     _rate_store[ip].append(now)
+    return False
+
+def is_tts_rate_limited(ip: str) -> bool:
+    now = time.time()
+    window = [t for t in _tts_rate_store[ip] if now - t < 60]
+    _tts_rate_store[ip] = window
+    if len(window) >= MAX_TTS_PER_IP_PER_MIN:
+        return True
+    _tts_rate_store[ip].append(now)
     return False
 
 # ---------------------------------------------------------------------------
@@ -248,6 +262,17 @@ async def lifespan(app: FastAPI):
         print("Langfuse tracing: ENABLED")
     else:
         print("Langfuse tracing: disabled (keys not set or langfuse not installed)")
+
+    # ── TTS proxy: pre-load voice sample ─────────────────────────────────
+    voice_path = os.path.join(os.path.dirname(__file__), "voice_sample.mp4")
+    if os.path.exists(voice_path):
+        app_state["tts_ref_audio_b64"] = base64.b64encode(
+            open(voice_path, "rb").read()
+        ).decode()
+        print("Voice sample loaded for TTS proxy.")
+    else:
+        app_state["tts_ref_audio_b64"] = None
+        print("WARNING: voice_sample.mp4 not found — /tts endpoint will be disabled.")
 
     print("Chat agent ready.")
     yield  # server runs here — everything after yield is teardown (nothing needed)
@@ -536,6 +561,31 @@ app.add_middleware(
 #   - Returns HTTP 422 with a detailed error message if validation fails
 #   - Generates OpenAPI docs (visible at /docs) from these definitions
 # ---------------------------------------------------------------------------
+def _strip_markdown(text: str) -> str:
+    """Remove markdown so the TTS model reads clean prose, not symbols."""
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)   # bold
+    text = re.sub(r"\*(.+?)\*", r"\1", text)         # italic
+    text = re.sub(r"`(.+?)`", r"\1", text)            # inline code
+    text = re.sub(r"^[\*\-]\s+", "", text, flags=re.MULTILINE)   # bullet points
+    text = re.sub(r"^\d+\.\s+", "", text, flags=re.MULTILINE)    # numbered lists
+    text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)        # links
+    return text.strip()
+
+
+class TtsRequest(BaseModel):
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def text_not_empty_or_too_long(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("text cannot be empty")
+        if len(v) > MAX_TTS_TEXT_CHARS:
+            v = v[:MAX_TTS_TEXT_CHARS]
+        return v
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None  # None on first message; server generates one
@@ -572,6 +622,48 @@ class ChatResponse(BaseModel):
 def health():
     """Quick liveness check — useful for deployment platforms and monitoring."""
     return {"status": "ok", "chain_loaded": "chain" in app_state}
+
+
+@app.post("/tts", include_in_schema=True)
+async def tts(request: TtsRequest, http_request: Request):
+    """
+    TTS proxy — converts text to speech using the Modal F5-TTS GPU endpoint.
+    The Modal API key never leaves the server; clients only call this endpoint.
+    Returns audio/wav bytes ready for the browser to play.
+    """
+    import httpx
+
+    f5_url = os.getenv("F5_SERVER_URL", "")
+    f5_key = os.getenv("F5_API_KEY", "")
+    f5_ref_text = os.getenv("F5_REF_TEXT", "")
+    ref_audio_b64 = app_state.get("tts_ref_audio_b64")
+
+    if not f5_url or not f5_key or not ref_audio_b64:
+        raise HTTPException(status_code=503, detail="TTS service not configured.")
+
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    if is_tts_rate_limited(client_ip):
+        raise HTTPException(status_code=429, detail="Too many TTS requests. Please slow down.")
+
+    clean_text = _strip_markdown(request.text)
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f5_url,
+                json={
+                    "api_key": f5_key,
+                    "ref_audio": ref_audio_b64,
+                    "ref_text": f5_ref_text,
+                    "gen_text": clean_text,
+                },
+            )
+        resp.raise_for_status()
+        return Response(content=resp.content, media_type="audio/wav")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"TTS backend error: {e.response.status_code}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail="TTS service unavailable.")
 
 
 @app.post("/chat", response_model=ChatResponse)

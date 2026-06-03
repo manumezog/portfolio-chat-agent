@@ -13,8 +13,9 @@ COPY build_db.py .
 # Build ChromaDB from JSON during image build — no binary files in git
 RUN python build_db.py
 
-# Copy API
+# Copy API and voice sample for TTS proxy
 COPY api.py .
+COPY voice_sample.mp4 .
 
 # HF Spaces requires port 7860
 EXPOSE 7860
